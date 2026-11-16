@@ -67,66 +67,112 @@ runs, directory listings) and the extra turns spent running things. So the app d
 
 ## Screens
 
-One window. A left rail of tabs, a tiled main area, and a status line at the bottom.
-Session, Preview, Terminal and Plan are **tiles in a tiling layout**, like a Linux tiling window
-manager: they fill the space with small gaps, can be dragged to snap into a new position, and
-move with a quick spring animation (details in `03-design.md` §Tiling). The drawing below is the
-default arrangement.
+**Keep it calm.** The first version of the prototype was rejected as too crowded. The rules:
+
+- One top bar, the tiles, one status line. No side rail, no second toolbar.
+- A project opens with **two tiles: Chat and Preview**. Plan and Terminal are closed until the
+  user opens them from the tile switch in the top bar (`chat · preview · plan · terminal`), or
+  the app opens one because something there needs attention (a command to approve, a failed check).
+- Plain words in the UI: "chat", "new", "Start build", "fixing…", "5h limit 1% used". No
+  internal ids, selectors, token breakdowns or keyboard hints on the main surface; those live in
+  tooltips, the command palette (`Ctrl+K`) and the Usage screen.
+- One accent-coloured primary button per tile at most.
+- Tool activity in the chat is one dim summary line per turn ("haiku looked through 3 files"),
+  expandable; never a list by default.
+- Thin, quiet scrollbars styled from the tokens (see `03-design.md`).
+
+The approved reference is the prototype at `scratch/forge-workspace.html`
+(published: https://claude.ai/artifact/G6q77kYNwUzatFQe3MVVCz). Where this document and the
+prototype disagree on layout or wording, the prototype wins.
 
 ```
-┌──┬───────────────────────────────────────────────┬─────────────────────────────┐
-│▣ │ SESSION  [SCOUT] [PLAN] [BUILD]               │ PREVIEW | TERMINAL | PLAN   │
-│◫ │                                               │                             │
-│▤ │  streamed conversation, terminal-styled       │  tiles: drag to snap,       │
-│❖ │                                               │  maximise, close, reopen    │
-│⚙ │                                               │                             │
-│  ├───────────────────────────────────────────────┤                             │
-│  │ > composer            [mic] [polish] [send]   │                             │
-├──┴───────────────────────────────────────────────┴─────────────────────────────┤
-│ cadarhouse · main · PLAN opus · ctx 34% · today 412k tok · cache 81% · 5h: 38% │
-└────────────────────────────────────────────────────────────────────────────────┘
+ FORGE  chapterwise ▾                              [ chat | preview | plan | terminal ]
+┌───────────────────────────────┐ ┌──────────────────────────────────────────────────┐
+│ CHAT  planning with opus  new │ │ PREVIEW  library prototype                    ▢ × │
+│                               │ │ .forge/prototypes/library.html      [◆ comment]  │
+│ > redo the library screen…    │ │ ┌──────────────────────────────┐ comments        │
+│ haiku looked through 3 files  │ │ │  the page being reviewed     │ ◆ 1 summary     │
+│ A card per book with…         │ │ │                              │ make it bold    │
+│                               │ │ └──────────────────────────────┘ opus: done      │
+│ > Tell opus what to build…    │ │                                                  │
+│ [scout|plan|build] skills ▾   │ │                                                  │
+│                    mic  send  │ │                                                  │
+└───────────────────────────────┘ └──────────────────────────────────────────────────┘
+ plan · opus · 5h limit 1% used · week 23% used
 ```
 
-Left rail tabs:
+Navigation:
 
-1. **Projects** — grid of tiles. Home screen when no project is open.
-2. **Workspace** — the tiled layout above. Default once a project is open.
-3. **Library** — UI component sources and project templates.
-4. **Skills** — synced skills, grouped; what each session loaded; pinned and never lists per role.
-5. **Usage** — token ledger and charts.
-6. **Settings**.
+- **Project button** (top left, shows the project name): opens the Projects screen.
+- **Tile switch** (top right): shows or hides each tile. Tiles are a tiling layout: drag a title
+  bar to snap, maximise, close (`03-design.md` §Tiling).
+- **Command palette** (`Ctrl+K`): everything else — Library, Skills, Usage, Settings, layout
+  presets, decision recall. These are full screens reached from the palette or the project
+  button's menu, not permanent chrome.
 
-### Projects tab
+### Start build: Opus's plan goes to Sonnet by itself
 
-- Tiles in a responsive grid. Each tile: project name, folder path (middle-truncated), detected
-  stack badge (Next.js, Vite, Expo, Python, unknown), git branch, last opened (relative),
-  tokens used in the last 7 days, and a small state marker (idle / session running / plan has N steps left).
+Once the user tells Opus to start (approves the prototype, or says "go"), the chain runs without
+the user relaying anything:
+
+1. **Opus → Haiku, directly.** Opus calls the `scout` subagent (Haiku) whenever it needs
+   something found or read. This happens inside Opus's turn.
+2. **Opus → Sonnet, through the plan.** Opus writes its instructions as steps in `plan.md`.
+   The Plan tile shows one button, **Start build**. The app then gives each step to Sonnet in
+   order, a fresh Sonnet session per step, runs the checks after each, and moves on.
+   It stops and opens the relevant tile only when something needs the user: a command Sonnet
+   wants run, a denied action, checks still failing after two fix attempts, or the step's token ceiling.
+3. A setting "Start building as soon as the plan is approved" (off by default) removes even
+   that one click.
+
+Opus does not supervise Sonnet turn by turn. That would keep Opus's expensive context open for
+the whole build; the app does the hand-off for free. If a step fails twice, the app offers
+"Ask Opus" which sends Opus the step and the failure (as a diff and error lines) to revise the plan.
+
+### Projects screen
+
+- Tiles in a responsive grid. Each tile shows three things: project name, folder path
+  (middle-truncated), and one line with last opened and tokens used this week. Stack, branch and
+  state are in the tile's tooltip. A dashed "+ new project" tile comes last.
 - Actions: **Open folder** (native directory picker), **New from template** (see Library),
   right-click a tile: Open, Reveal in Explorer, Remove from list (never deletes files).
 - Opening a tile switches to Workspace with that project as the working directory.
 
-### Workspace: session stream (left)
+### Chat tile
 
-- Role switcher at the top: SCOUT / PLAN / BUILD. Each keeps its own transcript and session id.
-  The active role's accent colour tints the prompt glyph and the status line.
-- Stream renders like a terminal log, not chat bubbles:
+- Title bar: `CHAT`, a plain status ("planning with opus"), a `new` button (fresh chat; the old
+  one stays in history) and maximise. Chat cannot be closed.
+- The stream sits directly on the tile, not in a bordered box:
   - user turns: `> text`
-  - assistant text: markdown rendered in mono, streamed as it arrives
-  - thinking: one collapsed dim line `· thinking…` (expandable if text is present)
-  - tool calls: one line each, e.g. `▸ Read src/app/page.tsx` → `✓ 212 lines` / `✗ denied`; click to expand input/output
-  - turn footer: `── 4.2s · in 1.2k · out 640 · cache 18k ──`
-- Composer: multi-line, Enter sends, Shift+Enter newline, Esc cancels a running turn.
-  Buttons: mic (dictation), polish (SCOUT rewrites the draft tighter; shows a diff to accept), send.
-- "New session" button per role (starts fresh; old transcript stays in history).
-- A context gauge per session. At 60% it turns amber and offers **Handoff**: the role writes a
-  summary to `.forge/handoff-<role>.md` and a fresh session is started that reads it.
+  - assistant text: markdown in mono, streamed as it arrives
+  - while working: one line with the spinner and what it is doing
+  - tool activity: **one dim summary line per turn** ("haiku looked through 3 files · opus read
+    the project map"). Clicking it expands the individual calls with input and output.
+  - no per-turn statistics line. Time and token counts for a turn are in the expanded view and on the Usage screen.
+- Composer, one raised box with two rows:
+  - row 1: `>` and the text area (Enter sends, Shift+Enter newline, Esc cancels a running turn;
+    the placeholder names who is listening: "Tell opus what to build…")
+  - row 2: the role switch as one segmented control `scout | plan | build` (each keeps its own
+    transcript; the active role's colour tints the prompt glyph and status line), then
+    `skills: <template> ▾`, then at the right `mic` and the solid `send` button (becomes `stop` while a turn runs).
+  - **Polish** is not a permanent button. It is offered as a small "tidy this up?" link under the
+    text area only after dictation or when the draft is longer than about 60 words.
+- When the chat's context passes 60%, a single line appears above the composer:
+  "This chat is getting long. Start fresh with a summary?" It runs the handoff
+  (`.forge/handoff-<role>.md`, new chat reads it). No permanent context gauge.
+- Things that need a decision appear as cards in the stream (a denied action, a sign-in problem),
+  each with at most two buttons.
 
-### Workspace: the other tiles
+### The other tiles
 
-- **Preview** — embedded browser for the project's dev server or a prototype file.
-  URL bar, back/forward/reload, device widths (375 / 768 / 1280 / fit), and **Comment mode**.
-- **Terminal** — a real PowerShell terminal in the project folder (tabs for multiple).
-- **Plan** — `plan.md` rendered as step cards with status, and a **Run step** button on each.
+- **Preview** — the project's running app or a prototype. A path/URL field and one `◆ comment`
+  toggle. Reload, back/forward and device widths (375 / 768 / 1280 / fit) are in the tile's
+  title-bar menu, not on the bar. The comments strip sits at the right and disappears when the
+  tile is narrow (pins stay visible).
+- **Plan** — the steps as a plain list (status glyph, step name, who built it and tokens used),
+  with one **Start build** button under it. A single step can be run or re-run from its row's menu.
+- **Terminal** — a real PowerShell terminal in the project folder (tabs for multiple). Requests
+  from Sonnet to run a command appear here as a card: "Sonnet needs `npm install date-fns`" with **Run it** / **Skip**.
 
 ### Prototype review (the user's `review-prototype` skill, built in, automatic during planning)
 
@@ -155,8 +201,11 @@ How it looks to the user:
 2. The user clicks any element: a numbered pin drops and a small input takes the note. Pins are
    listed in a side strip with their thread (note, PLAN's reply, resolved or open). Comments can
    be added while PLAN is busy; they queue.
-3. **Send review** (`Ctrl+Enter`) posts the open threads to PLAN as compact text: selector, a
-   short text snippet of the element, the note. No images by default, because images cost far
+3. **Comments are live.** Saving a pin sends it to PLAN straight away as compact text (selector,
+   a short text snippet of the element, the note). If PLAN is mid-turn the comment waits and goes
+   out the moment that turn ends. The user keeps commenting while PLAN works; the page updates
+   in front of them and each pin shows its state (queued, working, replied, resolved). A
+   **Live / Batch** switch restores send-all-at-once (`Ctrl+Enter`) for people who prefer it. No images by default, because images cost far
    more tokens; a per-pin "attach crop" toggle exists for when words are not enough.
 4. PLAN revises; replies appear under each pin and resolved pins fade.
 5. **Approve** locks the design and produces the plan.
@@ -164,7 +213,7 @@ How it looks to the user:
 `review-prototype` is pinned in every PLAN session.
 Comment mode also works on the live dev server during BUILD; there the review goes to the BUILD session.
 
-### Library tab
+### Library screen
 
 Two sections, both designed so code arrives **without the model writing it**:
 
@@ -178,7 +227,7 @@ Two sections, both designed so code arrives **without the model writing it**:
   Next.js, Expo). "New from template" asks for a name and parent folder, runs the command in a
   terminal, then registers the project.
 
-### Skills tab
+### Skills screen
 
 - Source: the user's private repo `https://github.com/Lymion/skills-collections`, which is a
   Claude Code plugin marketplace (`plugins/haykal-skills/skills/<name>/SKILL.md`, 117 skills on
@@ -186,27 +235,31 @@ Two sections, both designed so code arrives **without the model writing it**:
   FORGE clones it with the user's own git credentials into app data and can **Sync** (git pull).
 - Skills listed in groups (Design & Motion, Marketing, Context engineering, Remotion, Writing, Other)
   with name and description parsed from SKILL.md frontmatter.
-- **Haiku picks the skills for each chat.** Loading all 117 into every session spends context on
-  descriptions that chat never uses. Instead, when a session's first message is sent, a small
-  Haiku call reads that message plus the skill index and returns the few skills that fit
-  (at most 6). Only those are loaded for that session.
-  - The picked skills show as chips above the composer (`skills: emil-design-eng · animate · +`).
-    The user can remove one or add one by name before or after sending.
-  - The choice is fixed for the life of the session, because changing the skill list mid-session
-    throws away the prompt cache. **Re-pick** is a button; it warns that it starts a cache reset.
-  - Each role has **pinned** skills that always load regardless of the pick, and a **never** list.
-    Defaults are in `02-architecture.md`.
-  - A Settings switch chooses: `auto` (pick silently), `confirm` (show the pick, wait for Enter),
-    or `manual` (no Haiku call; pinned skills only).
+- **The user chooses the skills.** Nothing is picked automatically.
+  - The composer has one control: `skills: UI design ▾`. It opens a small panel with
+    **templates** at the top and the full skill list (searchable, tick boxes) below.
+  - A **template** is a named group of skills applied with one click. Shipped templates:
+    *UI design* (`review-prototype`, `prototype`, `ui-ux-pro-max`, `taste-skill`, `impeccable`),
+    *Motion* (`emil-design-eng`, `animate`, `apple-design`, `review-animations`),
+    *Polish* (`ui-elevate`, `impeccable`, `emil-design-eng`, `stop-slop`),
+    *Marketing* (`copywriting`, `ad-creative`, `cro`, `stop-slop`), *None*.
+  - **Save as template** stores the current ticks under a name the user types. Templates can be
+    renamed, edited and deleted in the Skills screen, and each role can have a default template.
+  - The button shows the template's name when the ticks match one, otherwise "N chosen". The
+    panel's footer shows "5 of 117 skills loaded".
+  - Skills are fixed for the life of a chat (changing them mid-chat throws away the prompt
+    cache). Changing the selection in a chat that has already started asks: "Apply to a new chat"
+    (default) or "Apply here (resets the cache)".
 - Extra sources: "Add skill from git URL".
 
-### Usage tab and status line
+### Usage screen and status line
 
-- Every turn's token counts are stored. Usage tab: totals by day, by role, by project; cache-hit
-  rate; the 10 most expensive turns with a link to the transcript.
-- Status line: project · branch · role + model · context % · tokens today · cache-hit % ·
-  rolling 5-hour total. If the CLI reports rate-limit information it is shown; otherwise the
-  5-hour figure is labelled as an estimate.
+- Every turn's token counts are stored. Usage screen: totals by day, by role, by project;
+  cache-hit rate; the 10 most expensive turns with a link to the transcript.
+- Status line, three items only: `plan · opus` (active role and model), `5h limit 1% used`,
+  `week 23% used`. The two limits are real figures reported by the CLI after every turn; hovering
+  shows the reset time. Clicking any item opens the Usage screen. Project name is in the top bar;
+  branch, context and cache figures are on the Usage screen.
 
 ### Dictation
 
@@ -232,8 +285,8 @@ Two sections, both designed so code arrives **without the model writing it**:
   5-hour total drops below a threshold. The queue is visible and cancellable; it never runs
   while the app is closed.
 - **Auto-route** — when the user types in the wrong role (e.g. asks BUILD "where is the auth
-  code?"), a Haiku check suggests the right role in a one-line hint. It never switches by itself.
-  It shares the single Haiku call with the skill picker when both apply.
+  code?"), a small Haiku check suggests the right role in a one-line hint. It never switches by
+  itself. Off by default.
 - **Diff-only review** — "Review step" sends PLAN the `git diff` since the step's checkpoint
   (truncated to 400 lines with a per-file summary beyond that), not the files.
 
@@ -254,8 +307,6 @@ A comment made with any of them becomes a pin in the same review list and is sen
   with live preview (CSS variables injected into the page). **Apply** saves `design.md` and asks
   BUILD once to carry the values into the code.
 - **Decision recall** — search `decisions.md` from the command palette.
-- **Run whole plan** — runs steps in dependency order; pauses on any denial, failed quiet check,
-  `NEEDS:` request, or budget stop.
 - **Session search** — full-text search across transcripts.
 
 ## Out of scope for v1

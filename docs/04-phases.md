@@ -9,6 +9,10 @@ One phase per session. Each ends with: acceptance checks run, `docs/STATUS.md` u
 
 Goal: replace every assumption about the `claude` CLI with captured facts.
 
+`docs/cli-notes.md` already holds facts verified on 2026-11-16 (hiding user skills, limiting PLAN
+to `.forge/`, the picker call, rate-limit data). Read it first, add `--setting-sources project,local`
+to every run below, still capture every fixture (the parser tests need them), and append.
+
 Each command below spends a small amount of the user's subscription usage. Use `--model haiku`
 for all of them and keep prompts tiny.
 
@@ -30,7 +34,7 @@ for all of them and keep prompts tiny.
    - `direct.jsonl` — BUILD's direct-mode flags: `--tools "Read,Glob,Grep,Edit,Write" --permission-mode acceptEdits --permission-prompts none`,
      prompt "Change the first word of note.txt to HELLO. Then run the command dir." Record that the edit
      happened, that no shell tool was available, and how the model reported it.
-   - `pick.json` — the skill-picker call: `--tools "" --no-session-persistence --output-format json --json-schema <file>`
+   - `pick.json` — the structured-output call (used by Auto-route in Phase 11; already verified): `--tools "" --no-session-persistence --output-format json --json-schema <file>`
      with schema `{skills: string[], role: string}`, prompt = three fake index lines plus a message.
      Record exactly where the structured result sits in the output and whether `--tools ""` is accepted.
 4. From the init event of `basic.jsonl` record: tool names, the skills/commands list, model id.
@@ -52,7 +56,8 @@ direct-mode and picker findings; no
 
 ## Phase 1 — Shell and design system
 
-Read: `03-design.md` (all), `02-architecture.md` §Stack, §Processes, §Tiling layout.
+Read: `03-design.md` (all), `02-architecture.md` §Stack, §Processes, §Tiling layout,
+`06-desktop-app.md` §It must feel native and §Installer.
 
 1. Scaffold with electron-vite (react-ts). Add Tailwind v4, zustand, zod, vitest, motion, fontsource
    JetBrains Mono, lucide-react. Scripts: `dev`, `build`, `typecheck`, `test`.
@@ -63,17 +68,27 @@ Read: `03-design.md` (all), `02-architecture.md` §Stack, §Processes, §Tiling 
    proving zod validation on the main side.
 4. `tokens.css` exactly as specified; Tailwind theme mapped to the variables.
 5. All primitives in `src/renderer/ui/` with every state. A hidden route `/kitchen` renders them all.
-6. App frame: left rail (6 tabs, tooltips, active indicator), main area with router, status line
-   with placeholder segments, command palette (`Ctrl+K`) listing navigation commands.
-7. Tiling: the split-tree model with unit tests for every pure function; `PaneFrame` with the
+6. App frame: top bar, main area with router, status line, command palette (`Ctrl+K`) that
+   reaches every screen (Projects, Library, Skills, Usage, Settings).
+7. Shell exactly as `01-product.md` §Screens and the prototype `scratch/forge-workspace.html`
+   (open it in a browser and match it): top bar with project button and tile switch, no side
+   rail, two tiles by default, styled scrollbars. Tiling: the split-tree model with unit tests for every pure function; `PaneFrame` with the
    depth recipe and pane colours; the Workspace route showing four placeholder tiles (each with
    a few lines of text and a coloured block so distortion is visible); FLIP spring animation for
    move, open, close, maximise; drag-to-snap with the drop ghost; divider drag; all `Alt+` keys;
    presets; layout saved and restored.
-8. `config.json` store with defaults and a Settings page that edits: role models/effort, CRT
-   texture toggle, font size (12–15px).
+8. `config.json` store with defaults and a Settings page that edits: role models/effort, font size (12–15px).
 
-Acceptance: `npm run dev` opens the window; rail navigation works by mouse and keyboard; kitchen
+9. Desktop-app basics from `06-desktop-app.md` §It must feel native: single instance, window state
+   remembered, no browser behaviours, separate dev data folder, app icon.
+10. **Installer smoke test now, not at the end.** Add the electron-builder config from
+    `06-desktop-app.md` and `npm run dist`. Build the installer, run it, and confirm the empty
+    shell installs, appears in the Start menu, launches, and uninstalls. Packaging problems are
+    cheapest to find while the app is nearly empty.
+
+Acceptance: the installer wizard runs; "FORGE" is found from the Start menu and launches the
+installed app; launching it a second time focuses the first window; uninstall removes it and
+leaves `%APPDATA%/FORGE`. `npm run dev` opens the window; the project button, tile switch and command palette work by mouse and keyboard; kitchen
 page shows every primitive; focus rings visible on Tab. Tiling: drag each tile to each edge of
 another and to its centre; open, close, maximise; retarget mid-animation by pressing move keys
 quickly; record the screen while doing so and step through frames to confirm no jump, no blur
@@ -85,7 +100,7 @@ defaults/merge and the tiling functions).
 
 ## Phase 2 — Projects
 
-Read: `01-product.md` §Projects tab, `02-architecture.md` persistence section.
+Read: `01-product.md` §Projects screen, `02-architecture.md` persistence section.
 
 1. `projects.json` store (id = uuid, name, path, addedAt, lastOpenedAt). Atomic writes.
 2. Open folder (native dialog), remove from list, reveal in Explorer.
@@ -111,8 +126,8 @@ Read: `02-architecture.md` §Engine (all), `docs/cli-notes.md` (all), `01-produc
 3. Role config in `src/shared/roles.ts`; flags built by a pure function
    `buildArgs(role, opts): string[]` with unit tests (one per role; assert no API-key env, assert
    `--bare` never present, assert BUILD has no shell tool unless `allowShell` is set).
-4. Renderer: role switcher, stream renderer (text, thinking, tool lines, denied cards, turn
-   footer), composer with send/stop, auto-scroll behaviour, new-session button, transcript reload
+4. Renderer: chat tile exactly as `01-product.md` §Chat tile and the prototype (stream with one
+   expandable summary line per turn, decision cards, two-row composer with the role switch), auto-scroll behaviour, new-session button, transcript reload
    from disk when reopening a project.
 5. Denied card actions wired to `.forge/permissions.json`. `NEEDS:` line detection and cards
    (Run in terminal is wired in Phase 4; until then the card shows the command with a copy button).
@@ -153,7 +168,9 @@ the user's original skill (command in `02-architecture.md` §Skills, bundled plu
    `.forge/reviews/*.json`, optional crop.
 4. Prototype watcher: new/changed `.forge/prototypes/*.html` opens/reloads and enables Comment mode.
    Shots: capture the preset set, show the Shots strip, collect console errors.
-5. **Send review** builds the message in the specified format and sends it to the PLAN session
+5. Live comment delivery (idle → immediate turn; busy → queue and flush on turn end; pin states;
+   streamed reply under the pin; Live/Batch switch). In Batch mode **Send review** builds the message
+   in the specified format and sends it to the PLAN session
    (or BUILD when the target is the dev server); **Approve** sends
    `APPROVED <path>. Write .forge/design.md, then .forge/plan.md.`
 
@@ -176,9 +193,10 @@ Read: `01-product.md` §core idea, `02-architecture.md` §Role instructions, §B
    user a diff of SOURCE.md against the adapted SKILL.md in STATUS.
 2. `plan.md` parser/serialiser (pure, unit-tested with good and malformed input; malformed steps
    are shown as "unparsed" cards, never dropped).
-3. Plan pane: step cards, status, dependencies greyed until met, **Run step**.
+3. Plan tile: the plain step list and the single **Start build** button (per-step run/re-run in the row menu).
 4. Git module: checkpoint + undo exactly as specified, tested in a temp repo by unit tests.
-5. Step runner flow including `NEEDS:` handling, diff summary and Keep/Undo.
+5. Step runner flow including `NEEDS:` handling, diff summary and Keep/Undo, and **Start build**
+   (runs all steps in order with the pause conditions; "Ask Opus" on a twice-failed step).
    Quiet checks module with reducers and the two-round limit (`02-architecture.md` §Direct mode plumbing).
 6. "Map repo" action: SCOUT produces the digest, app writes `.forge/map.md`.
 7. Brief editor: composer "Save as brief" writes `.forge/brief.md`.
@@ -188,7 +206,7 @@ Read: `01-product.md` §core idea, `02-architecture.md` §Role instructions, §B
 Acceptance: in a scratch Vite project — map repo, write a brief, ask PLAN for a one-screen
 feature; PLAN writes a prototype with the Prototype bar and presets and stops; comment on three
 elements and send; PLAN edits the page and writes a one-line reply and `resolved` for each;
-approve; `design.md` and a parseable `plan.md` appear; Run step 1 with BUILD; introduce a type
+approve; `design.md` and a parseable `plan.md` appear; press Start build and let it run step 1; introduce a type
 error by hand and confirm BUILD receives only the failing lines and fixes it; Undo restores the tree exactly (`git status` clean
 relative to the checkpoint, including removal of new files).
 
@@ -196,29 +214,27 @@ relative to the checkpoint, including removal of new files).
 
 ## Phase 7 — Skills manager
 
-Read: `01-product.md` §Skills tab, `02-architecture.md` §Skills, `cli-notes.md` item 5.
+Read: `01-product.md` §Skills screen, `02-architecture.md` §Skills, `cli-notes.md` item 5.
 
 Clone/sync source repo (show progress and errors), index SKILL.md frontmatter, grouping (by a
-static name→group map in `resources/skill-groups.json`, unknown → Other), the Haiku skill picker
-end to end (index text, call, validation, per-session plugin folder, chips above the composer,
-add/remove, Re-pick with cache warning, auto/confirm/manual setting, failure fallback), pinned and
-never lists per role, "needs shell" badge, "Add skill from git URL".
-If `cli-notes.md` shows user-level skills cannot be hidden, show a clear note in the tab:
-"Skills in ~/.claude/skills also load in every session" with the count.
+static name→group map in `resources/skill-groups.json`, unknown → Other). Manual selection end
+to end: the `skills ▾` control and its panel (templates row, searchable tick list, count,
+Save as template), template store with the shipped templates, per-role default template,
+Skills screen (template editing, full list), per-session plugin folder, the "new chat or apply
+here" choice when changing skills mid-chat, "needs shell" badge, "Add skill from git URL".
+There is no automatic skill picking.
 
 Acceptance: sync succeeds against the real repo; counts match the repo (117 skills on 2026-11-16).
-Send these first messages in new sessions and record what the picker chose: "add a spring
-animation to the drawer" (expect motion/design skills, no marketing), "write a cold email
-sequence" in PLAN (expect marketing skills), "rename this variable" (expect an empty pick).
-The init event's skill list equals pinned ∪ picked; the second turn of a session reports cache
-reads (the skill folder did not change); a picker timeout falls back to pinned only; the index
-text is byte-identical across two calls.
+Clicking a template loads exactly its skills (compare with the init event's skill list on the
+next turn); ticking one more changes the button to "6 chosen"; Save as template creates a
+template that survives restart; the second turn of a chat reports cache reads; a template that
+names a missing skill warns and loads the rest; with template *None* the init list has only built-ins.
 
 ---
 
 ## Phase 8 — Library
 
-Read: `01-product.md` §Library tab, `02-architecture.md` §Library.
+Read: `01-product.md` §Library screen, `02-architecture.md` §Library.
 
 Registries (verified entries only), cached search, result cards, Add to project via terminal,
 Tell BUILD, in-app browser with bookmarks and "Send selection to composer", templates with
@@ -248,12 +264,12 @@ keeps its concrete requirements (compare by eye, report both texts in STATUS).
 
 ## Phase 10 — Usage
 
-Read: `01-product.md` §Usage tab, `02-architecture.md` §Usage ledger.
+Read: `01-product.md` §Usage screen, `02-architecture.md` §Usage ledger.
 
-Usage tab (by day/role/project, cache-hit rate, top turns, link to transcript), complete status
+Usage screen (by day/role/project, cache-hit rate, top turns, link to transcript), complete status
 line, per-tile 7-day meter, CSV export.
 
-Acceptance: numbers on the tab equal sums computed by hand from `usage.jsonl` for one day;
+Acceptance: numbers on the screen equal sums computed by hand from `usage.jsonl` for one day;
 derived-metric functions have unit tests including empty and single-entry cases.
 
 ---
@@ -264,7 +280,7 @@ Read: `01-product.md` §Token savers, `02-architecture.md` §Direct mode plumbin
 
 Build in this order, one commit each: reference board; snippet shelf; budget guard (live token
 count from stream events, cancel at the ceiling, show partial work); diff-only review; auto-route
-hint (reuses the picker call's `role` field; one Haiku call covers both); reset-aware queue.
+hint (its own small Haiku structured-output call, off by default); reset-aware queue.
 Quiet checks already exist from Phase 6; add the on-demand "Run checks" button and per-project
 command editor here.
 
@@ -284,24 +300,36 @@ Every tool here creates or uses pins in the existing review list. Do not add a s
 store or a second way of sending feedback. Order, one commit each: point and talk; draw on
 preview; variant picker (read the `prototype` skill and its `PICKER.md` first; its variants
 become Preview tabs); before/after slider (uses checkpoint screenshots; start capturing them in
-the step runner); design-token panel; decision recall; session search; run whole plan with
-its pause conditions.
+the step runner); design-token panel; decision recall; session search.
 
 Acceptance: a spoken comment while hovering becomes a pin with the transcript; a drawing becomes
 a pin with a crop; both go out through Send review in the same message as typed pins; promoting
 a variant writes `design.md`; the slider shows a real before/after for a finished step; a token
-edit previews live and Apply triggers exactly one BUILD turn; Run whole plan pauses on a failed
-check, a `NEEDS:` card, a denial and a budget stop (test each).
+edit previews live and Apply triggers exactly one BUILD turn.
 
 ---
 
-## Phase 13 — Design polish and packaging
+## Phase 13 — Design polish, release and updates
 
-Read: `03-design.md` §Phase 13 polish procedure.
+Read: `03-design.md` §Phase 13 polish procedure, `06-desktop-app.md` (all).
 
-Run the polish passes in order (one commit each). Then: app icon, electron-builder NSIS config,
-`npm run dist`, install the result on this machine and smoke-test Phases 2–12's acceptance lists
-on the installed build (native modules, the picker preload path and the Whisper worker are the
-usual breakages).
+1. Run the polish passes in order (one commit each).
+2. Finish the installer: final icon at all sizes, wizard options, uninstall checkbox, jump list,
+   native notifications, the "claude not found" screen.
+3. `scripts/release.mjs` and `npm run release` exactly as specified.
+4. Updates: the `local` channel end to end (check, sha512 verify, status-line item, changelog
+   view, Restart and update, install on quit, never during a running turn), Settings → About,
+   and the `github` channel behind its setting.
+5. Schema versions and migrations with backups for the three user files.
 
-Acceptance: installed app passes the smoke test; STATUS lists every polish change by pass.
+Acceptance, all on the **installed** app:
+- Install 0.x.0 from the wizard. Smoke-test the acceptance lists of Phases 2–12 (native modules,
+  webview preload path, Whisper worker, bundled skills path, finding `claude` from a Start-menu launch).
+- Make a visible one-line change, run `npm run release`. Within seconds the running app shows
+  the update item; Restart and update brings it back on the new version with the change visible
+  and all projects, settings and templates intact.
+- Start a build, then release again: the app does not restart until the build finishes.
+- Corrupt the installer file by one byte: the app reports a checksum error and keeps running.
+- Run a migration from a fixture of the previous config shape: data is preserved and a backup exists.
+- `npm run dev` and the installed app run side by side with separate data.
+- STATUS lists every polish change by pass.

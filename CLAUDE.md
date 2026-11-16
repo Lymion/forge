@@ -34,6 +34,8 @@ You are building it one phase at a time. This file is short on purpose. Details 
   breaks on Windows. Anything long that must be a flag value goes in a temp file.
 - TypeScript `strict`. No `any` except at a zod-validated boundary. No default exports except React pages.
 - Do not restyle or "improve" the design system in feature phases. Design changes happen only in Phase 13.
+- FORGE is an installed desktop app, never a web page: follow `docs/06-desktop-app.md`. User data
+  lives only in `%APPDATA%/FORGE` (dev: `FORGE-dev`), never in the install folder.
 - Platform is Windows 11. Use `path.join`, never hard-code `/`. Kill process trees with `taskkill /PID <pid> /T /F`.
 
 ## Commands (after Phase 1)
@@ -42,6 +44,8 @@ You are building it one phase at a time. This file is short on purpose. Details 
 - `npm run typecheck` — `tsc --noEmit` for main, preload, renderer
 - `npm test` — vitest (unit tests for parsers, stores, pure logic)
 - `npm run build` — production build
+- `npm run dist` — build the Windows installer into `release/` (from Phase 1)
+- `npm run release` — test, bump version, changelog, installer, publish to the update channel (from Phase 13)
 
 ## Layout of the repo (after Phase 1)
 
@@ -52,5 +56,8 @@ src/renderer/    React app: app/, features/<feature>/, ui/ (design-system primit
 src/shared/      Types and zod schemas used by both sides (EngineEvent, IPC contracts, Role config)
 resources/       Bundled plugin (forge-skills/), fonts, default registries.json, templates.json
 fixtures/        Real captured `claude` stream-json output from Phase 0 (used by parser tests)
+build/           App icon sources
+scripts/         release.mjs, spike.mjs
+release/         Built installers and update metadata (git-ignored)
 docs/            Spec and STATUS
 ```

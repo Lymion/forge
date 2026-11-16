@@ -18,7 +18,7 @@ Install the latest stable of each at scaffold time and let `package.json` record
 | Fonts | `@fontsource/jetbrains-mono` (bundled, no network) | |
 | Dictation | `@huggingface/transformers` running Whisper in a Web Worker | Local, zero tokens |
 | Tests | vitest | |
-| Packaging | electron-builder (NSIS), Phase 13 only | |
+| Packaging | electron-builder (NSIS wizard) from Phase 1; `electron-updater` for updates in Phase 13 | See `06-desktop-app.md` |
 
 Persistence is plain files under `app.getPath('userData')`; no database, no native SQLite module:
 
@@ -67,6 +67,9 @@ These flags exist in `claude --help`: `-p/--print`, `--output-format stream-json
 
 ### Not verified — Phase 0 must establish these and write them to `docs/cli-notes.md`
 
+`docs/cli-notes.md` already exists with items 3, 5 and 7 and the picker call VERIFIED by real runs
+(2026-11-16). Phase 0 covers the rest and appends to that file.
+
 1. Exact JSON shape of each stream-json line (init, assistant, user/tool-result, partial
    stream events, result). The shapes below are the expected ones, not confirmed.
 2. Exact built-in tool names in this version (read them from the init event's tool list;
@@ -78,7 +81,7 @@ These flags exist in `claude --help`: `-p/--print`, `--output-format stream-json
    or put role instructions in the bundled plugin instead.
 5. Whether `--setting-sources project,local` hides skills in `~/.claude/skills` while
    subscription auth still works. The user already has ~100 skills there; if they cannot be
-   hidden, the skill picker can only add, not subtract, and the Skills tab must say so.
+   hidden, a chat loads them on top of the skills the user chose. (VERIFIED: they can be hidden.)
 6. How the resolved executable is launched on Windows (`where claude` → `.exe` or `.cmd`).
 7. Whether the result event reports context-window usage and rate-limit information.
 8. Whether `--agents` accepts a file path and honours a per-agent `model` field.
@@ -99,6 +102,7 @@ claude -p
   [--agents <tmp file>]                       (PLAN only)
   [--append-system-prompt ...]                (per cli-notes.md)
   --exclude-dynamic-system-prompt-sections
+  --setting-sources project,local            (VERIFIED: hides user skills, plugins and connectors; see cli-notes.md)
 ```
 
 - `cwd` = project folder.
@@ -236,7 +240,12 @@ it "≈ API value" and treat tokens as the primary number.
 3. Send: `Implement step S3 from .forge/plan.md. Read only that step, its dependencies' entries in .forge/progress.md, and .forge/design.md.`
 4. On `turn-result`: handle any `NEEDS:` cards, then run quiet checks. On failure send the
    failure message to the same session (max two rounds).
-5. Re-parse `plan.md`, refresh the Plan pane, show the diff summary
+5. **Start build** runs this whole procedure for every `todo` step in dependency order, one
+   after another, without waiting for the user between steps. It pauses (and opens the tile that
+   needs attention) on: a `NEEDS:` card, a denial, checks failing after two rounds, a budget
+   stop, or the user pressing Stop. Resuming continues from the paused step. "Ask Opus" on a
+   failed step sends PLAN: the step text, `git diff --stat`, and the failing lines.
+6. Re-parse `plan.md`, refresh the Plan pane, show the diff summary
    (`git diff --stat` since the checkpoint) with **Keep** / **Undo step** (restore checkpoint).
 
 ## Tiling layout (`src/renderer/features/tiling/`)
@@ -256,8 +265,10 @@ it "≈ API value" and treat tokens as the primary number.
 - Drag: grabbing a pane's title bar lifts it (see design). Drop zones on each other pane:
   left/right/top/bottom 25% bands = split on that side; centre = swap. A translucent ghost shows
   where it will land. Dividers between tiles are draggable to change `ratio` (min pane 280×200).
-- Layout is saved per project in `projects.json`; named presets: `plan` (session | preview),
-  `build` (session | terminal over preview), `review` (preview maximised with comments strip).
+- Layout is saved per project in `projects.json`; the default for a new project is two tiles, `session | preview` at 42/58.
+  The tile switch calls `toggle(pane)`: closing removes the leaf (the session tile cannot be closed);
+  opening splits the largest non-session tile along its longer side. Presets (`two`, `all`,
+  `review` = preview maximised) are command-palette commands only.
 
 ## PTY terminal
 
@@ -289,7 +300,19 @@ into the composer inside a fenced block. This is how errors reach Claude without
   The app writes `note`; PLAN writes `reply` and `resolved`. Re-read the file after each PLAN turn.
   Only unresolved pins are sent. Validate with zod; if PLAN leaves the file malformed, restore the
   app's last good copy and show PLAN's chat reply instead.
-- "Send review" message format (one line per pin):
+- **Live comments (default).** A comment is delivered the moment it is saved, not in a batch:
+  - Target session idle → start a turn at once with that one comment (same format as below, one line).
+  - Target session busy → the comment is queued; when the running turn ends, all queued comments
+    go out together as the next turn, immediately. The pin shows `queued`, then `working…`.
+  - While the turn streams, the pin's thread shows the reply as it is written, the preview
+    hot-reloads on every file change (the watcher already does this), and the app re-shoots.
+  - Each comment turn resumes the same session, so it reads from a warm cache; the cost of a
+    one-line comment is mostly the edit it causes. A queue cap of 20 and a 400 ms debounce after
+    the user stops typing in the pin's input keep it from firing on half-written notes
+    (Enter saves at once).
+  - A switch in the review strip chooses **Live** or **Batch**. Batch is the old behaviour:
+    nothing is sent until **Send review**.
+- Message format (one line per pin; in Live mode usually a single line):
 
 ```
 REVIEW .forge/prototypes/home.html — 3 comments
@@ -318,37 +341,26 @@ Revise the prototype, or tell me which of these you disagree with and why.
   `ceil((name.length + description.length) / 4)`.
   The folder name and the frontmatter `name` can differ (the folder `taste-skill` holds the skill
   named `design-taste-frontend`); index by folder, display the frontmatter name, match on either.
-- **Skill picker** (`src/main/skills/pick.ts`). Runs once, before the first turn of a session:
-  1. Build the index text: one line per skill, `folder | description cut to 200 chars`, sorted by
-     folder name so the text is byte-identical between calls (keeps Haiku's prompt cache valid).
-     Skip skills on the role's **never** list.
-  2. Spawn `claude -p --model haiku --effort low --tools "" --no-session-persistence
-     --json-schema <tmp file> --output-format json`, prompt on stdin:
-     index first, then `ROLE: <role>`, `PROJECT STACK: <stack>`, `MESSAGE: <user's first message>`,
-     and the instruction: "Return the folder names of the skills that would materially help with
-     this message, most useful first, at most 6. Return an empty list if none clearly apply.
-     Do not pick a skill because it is loosely related."
-     Schema: `{ "skills": string[] (maxItems 6), "role": "scout"|"plan"|"build" }` (`role` feeds Auto-route).
-     Confirm the exact way structured output is returned from `cli-notes.md`; add this call to the Phase 0 fixtures.
-  3. Validate: drop names not in the index. Final set = role **pinned** ∪ picked, minus removed-by-user.
-  4. Materialise `userData/skills/sessions/<sessionKey>/` as a valid plugin:
-     `.claude-plugin/plugin.json` (`{ "name": "forge-session", "version": "0.0.0" }`) and
-     `skills/<folder>/` copied from the source (copy, not symlink; Windows symlinks need admin).
-     `sessionKey` is a uuid the app creates before the first turn and maps to the CLI session id.
-     The folder is immutable for the session; **Re-pick** or a manual chip change writes a new
-     folder and the UI warns once that the next turn rebuilds the cache.
-  5. On timeout (15s), error, or invalid JSON: use pinned skills only and show `skills: pinned only (picker failed)`.
-  - Delete session skill folders when their session is deleted, and all orphans on app start.
-- Role defaults (folder names; skip missing ones with a warning):
-  - SCOUT — pinned: none. Picker off (SCOUT never loads skills).
-  - PLAN — pinned: `prototype` (the bundled `review-prototype` is always loaded as well). Never: none.
-  - BUILD — pinned: none. Never: marketing-group skills unless the user enables them.
-- The Skills tab shows, per open session, the loaded skills and estimated description tokens,
-  and the total the picker saved versus loading everything.
-- **User-level skills.** The user also has ~100 skills in `~/.claude/skills`. If `cli-notes.md`
-  item 5 shows they can be hidden (`--setting-sources`), hide them in FORGE sessions so the pick
-  is the whole list. If they cannot, the picker still adds the right skills but cannot remove
-  those; say so plainly in the Skills tab with the count.
+- **Skill selection is manual** (`src/main/skills/select.ts`). No model call.
+  - `userData/skill-templates.json`: `[{ id, name, skills: string[] (folder names), builtIn: boolean }]`,
+    seeded with the shipped templates in `01-product.md`. Built-in ones can be edited; "Reset" restores them.
+  - Per role: `defaultTemplateId` (PLAN → *UI design*, BUILD → *Motion*, SCOUT → *None*).
+  - A chat's selection = its template's skills plus or minus the user's ticks, stored with the session.
+  - Before the first turn, materialise `userData/skills/sessions/<sessionKey>/` as a valid plugin:
+    `.claude-plugin/plugin.json` (`{ "name": "forge-session", "version": "0.0.0" }`) and
+    `skills/<folder>/` copied from the source (copy, not symlink; Windows symlinks need admin).
+    The folder never changes for that session. Skip names missing from the source with a visible warning.
+  - Changing skills after the first turn: default is to start a new chat with the new set; "Apply
+    here" writes a new folder for the same session and warns that the cache resets.
+  - Delete session skill folders with their session, and orphans on app start.
+  - The verified Haiku structured-output call (cli-notes.md §3) is no longer used for skills; it
+    remains the mechanism for Auto-route in Phase 11.
+- The Skills screen shows templates (create, rename, edit, delete, set as a role's default), the
+  full list with search, and for each open chat the loaded skills with estimated description tokens.
+- **User-level skills.** The user also has ~120 skills in `~/.claude/skills`. VERIFIED: with
+  `--setting-sources project,local` they do not load (144 → 21 skills, built-ins only), so the
+  pick is the whole list. Settings has a switch "Load my global Claude settings" (off) for the
+  rare session that needs them, with a note that it adds about 15k tokens to every session start.
 - Some skills carry hooks or scripts that need a shell (for example `taste-skill` has a Stop hook
   that runs a Node script and needs Chrome). Show a "needs shell" badge on such skills (detect
   `hooks:` in frontmatter or a `scripts/` folder). They load fine for PLAN; in BUILD direct mode
@@ -362,7 +374,7 @@ Revise the prototype, or tell me which of these you disagree with and why.
     keep the original wording for every rule the table marks as kept; replace steps 3–5 with what
     the app does and what PLAN must do (write replies into the review file); name no tool that the
     init event in `cli-notes.md` does not list. Because this copy is bundled and always loaded,
-    exclude any same-named skill in synced sources from the picker index so two versions never load.
+    exclude any same-named skill in synced sources from the skill list so two versions never load.
 
 ## Library
 

@@ -81,6 +81,34 @@ body[data-role="build"] { --accent: var(--build); }
 Check contrast: `--fg-0` and `--fg-1` on `--bg-1` must meet WCAG AA (4.5:1). `--fg-2` is for
 non-essential text only.
 
+## Restraint (user requirement)
+
+The user rejected a denser first prototype. The approved look is `scratch/forge-workspace.html`.
+
+- Two tiles by default; a tile has a title bar and its content, nothing else stacked above the content.
+- No boxes inside boxes: the chat stream and plan list sit directly on the tile surface, separated
+  by space and hairlines, not by nested bordered panels. Only the composer and cards that ask
+  the user for a decision are raised.
+- Controls that belong together are one segmented control, not a row of separate buttons.
+- Secondary actions are borderless text buttons; one solid accent button per tile.
+- Line height 1.6, 14px tile padding, generous empty space in the chat.
+
+### Scrollbars
+
+Default OS scrollbars look out of place. Style them everywhere, the terminal and popovers included:
+
+```css
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px;
+  border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-3); background-clip: padding-box; }
+```
+
+xterm draws its own viewport scrollbar: apply the same rules to `.xterm-viewport`. The Preview
+webview is the user's page and keeps its own scrollbars.
+
 ## Typography
 
 - One family: JetBrains Mono, weights 400 / 500 / 700, bundled locally. Ligatures off
@@ -108,20 +136,21 @@ non-essential text only.
   highlighting. Never on large backgrounds or body text. Rule of thumb: on any screen, coloured
   pixels stay under about a tenth of the area, and no more than three hues sit next to each other.
   Unfocused panes show their colour at 50% saturation.
-- **Pane title bars** are 28px, part of the slab: `◧ PREVIEW  localhost:5173` with the label in
-  the pane's colour, controls at the right (maximise, close). The bar is the drag handle.
+- **Tile title bars** are 30px with no bottom border and no icon: the tile's name in small bold
+  caps in its colour (`PREVIEW`), a short plain description in `--fg-2`, and at the right maximise
+  and close as faint glyphs that brighten on hover. The bar is the drag handle.
 - **Prompt glyph** `>` in `--accent` before user turns and in the composer. Block caret, blinking
   at 1.1s, steady while typing; no blink under reduced motion.
 - **Glow** (`--glow` as `text-shadow`/`box-shadow`) only on: the active role chip, the prompt
   glyph while a turn is running, and focus rings. Never on body text.
-- **Scanlines**: a fixed overlay, `repeating-linear-gradient` 1px every 3px at 2.5% opacity,
-  `pointer-events: none`. Off by default under `prefers-reduced-motion` or reduced transparency;
-  toggle in Settings ("CRT texture").
+- **No scanlines or background texture.** The user asked for the line overlay to be removed. Surfaces are clean; do not add a CRT effect or a setting for one.
 - **Status glyphs** (text, not icon fonts): `▸` running, `✓` ok, `✗` failed/denied, `·` idle,
   `◆` pinned comment. Icons elsewhere: `lucide-react` at 14px, stroke 1.5, only where a glyph
   will not do (mic, settings, folder).
-- **Role chips**: `[ SCOUT ]`, `[ PLAN ]`, `[ BUILD ]` — bracketed text; active one is filled with
-  `--accent` at 14% and has the accent text colour.
+- **Segmented controls** for choices that belong together (the role switch `scout | plan | build`,
+  the tile switch `chat | preview | plan | terminal`): one raised strip with hairline dividers;
+  the active segment is tinted with its own colour at 14% and takes that colour for its text.
+  Lowercase labels, no brackets.
 
 ## Components (`src/renderer/ui/`)
 
@@ -135,18 +164,18 @@ focus-visible (1px `--accent` outline + glow, offset 1px), disabled (`--fg-3`, n
 
 ## Screen notes
 
-- **Project tiles**: 260px min width, 148px tall, `--bg-2`, 1px `--line`. Top row: name (15px,
-  500) and stack badge. Middle: path in `--fg-2`, middle-truncated. Bottom row: branch, last
-  opened, 7-day tokens as a tiny `Meter`. Hover: border becomes `--line-strong`, name gets
-  `--accent`. The "new project" tile is dashed-bordered with a `+`.
-- **Session stream**: max line width 100ch, 16px side padding, tool lines indented 2ch, turn
-  footer as a full-width dim rule with stats. Auto-scroll sticks to bottom unless the user has
+- **Project tiles**: 230px min width, `--elev-2`, 14px padding. Name (15px, 500), path in `--fg-2`
+  middle-truncated, one bottom line with last opened and weekly tokens. Hover: lifts 2px, border
+  `--line-strong`, name takes `--accent`. The "new project" tile is dashed-bordered, no shadow.
+- **Chat stream**: max line width 88ch, 14px side padding, no surrounding box, one dim summary
+  line per turn for tool activity, no statistics line. Auto-scroll sticks to bottom unless the user has
   scrolled up; then show a `↓ new output` pill.
 - **Composer**: grows from 1 to 10 lines; border becomes `--accent` on focus; while a turn runs
   the send button becomes `stop`.
-- **Status line**: 24px tall, `--bg-0`, segments separated by `·`, each segment clickable
-  (branch → git menu, role → role settings, tokens → Usage tab).
-- **Plan cards**: one per step, status glyph at left, files as dim chips, `Run step` on the right.
+- **Status line**: 24px tall, no top border, three items separated by `·` (role and model in the
+  accent colour, 5-hour limit, weekly limit). Clicking opens the Usage screen.
+- **Plan list**: plain rows divided by hairlines (status glyph, step name, builder and tokens at
+  the right in `--fg-2`), then one solid **Start build** button with a one-line explanation beside it.
 - **Comment pins**: 20px amber `◆` with the number; selected pin's element gets a 1px amber outline.
 
 ## Tiling: panes that snap into place
@@ -176,13 +205,13 @@ fast, settle with a hint of overshoot, and never feel floaty. Mechanics are in
 
 Keys: `Alt+H/J/K/L` focus left/down/up/right · `Alt+Shift+H/J/K/L` move the focused pane ·
 `Alt+F` maximise/restore · `Alt+W` close pane · `Alt+Enter` open a terminal tile ·
-`Alt+1/2/3` layout presets plan/build/review.
+Layout presets are in the command palette, not on screen.
 
 ## Motion rules
 
 - Animate only `transform` and `opacity`. Entrances use `--ease-out`; never `ease-in`.
 - UI feedback ≤ 180ms. Dialogs ≤ 260ms. Pane layout changes follow §Tiling.
-- No animation on things done many times a minute from the keyboard: rail tab switches, role
+- No animation on things done many times a minute from the keyboard: screen switches, role
   switches, sending a message, stream text arriving.
 - Named animations allowed: everything in §Tiling, project-tile hover lift (translateY −2px with
   the soft shadow deepening), button press (translateY 1px), dialog fade + scale from 0.97,
@@ -191,7 +220,7 @@ Keys: `Alt+H/J/K/L` focus left/down/up/right · `Alt+Shift+H/J/K/L` move the foc
 
 ## Keyboard
 
-`Ctrl+K` command palette · `Ctrl+1/2/3` SCOUT/PLAN/BUILD · `Ctrl+Shift+P/T/L` open or focus the
+`Ctrl+K` command palette · `Ctrl+1/2/3` SCOUT/PLAN/BUILD · `Ctrl+Shift+P/T/L` show or focus the
 Preview/Terminal/Plan tile · `Ctrl+N` new session · `Ctrl+O` open project · `Esc` cancel turn ·
 `Ctrl+Shift+Space` (hold) dictate · `Ctrl+Shift+C` toggle Comment mode · `Ctrl+Enter` send review.
 All shortcuts are listed in the command palette.

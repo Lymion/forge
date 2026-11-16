@@ -1,0 +1,7 @@
+node_modules/
+out/
+dist/
+release/
+scratch/shots/
+.forge/reviews/*.png
+.forge/checkpoints.json
